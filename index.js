@@ -2,10 +2,12 @@ import puppeteer from 'puppeteer-core'
 import { Solver } from '@2captcha/captcha-solver'
 import { readFileSync } from 'fs'
 import { normalizeUserAgent } from './normalize-ua.js'
+import dotenv from 'dotenv'
+dotenv.config()
 
 class AppointmentBot {
     constructor() {
-        this.currentAppointment = new Date('2026-01-13');
+        this.currentAppointment = null;
         this.browser = null;
         this.page = null;
     }
@@ -62,53 +64,170 @@ class AppointmentBot {
         while (true) {
             try {
                 // Click reschedule button
-                await this.page.waitForSelector('.reschedule-btn', { timeout: 1800000 });
-                await this.page.click('.reschedule-btn');
+                await this.page.waitForSelector('#rescheduleButton', { timeout: 1800000 });
+                await this.page.click('#rescheduleButton');
 
                 // Click first available button
-                await this.page.waitForSelector('.first-available-btn', { timeout: 1800000 });
-                await this.page.click('.first-available-btn');
+                await this.page.waitForSelector('#firstAvailable', { timeout: 1800000 });
+                await this.page.click('#firstAvailable');
 
-                // Get available dates
-                await this.page.waitForSelector('.calendar-day:not(.full)', { timeout: 1800000 });
-                const availableDates = await this.page.$$('.calendar-day:not(.full)');
+                // Wait for 2 seconds
+                await new Promise(resolve => setTimeout(resolve, 2000));
 
-                for (const dateElement of availableDates) {
-                    const dateText = await dateElement.evaluate(el => el.getAttribute('data-date'));
-                    const availableDate = new Date(dateText);
+                // Wait for the calendar to load
+                await this.page.waitForSelector('#weekDiv', { timeout: 1800000 });
+                console.log("week div seen");
 
-                    if (availableDate < this.currentAppointment) {
-                        // Click the date
-                        await dateElement.click();
+                // Add a delay to ensure calendar is fully rendered
+                await new Promise(resolve => setTimeout(resolve, 2000));
 
-                        // Select earliest time slot
-                        await this.page.waitForSelector('input[name="appointment_time"]', { timeout: 1800000 });
-                        const timeSlots = await this.page.$$('input[name="appointment_time"]');
-                        if (timeSlots.length > 0) {
-                            await timeSlots[0].click();
-                            await this.page.click('.update-appointment-btn');
-                            console.log(`Successfully booked earlier appointment for ${dateText}`);
-                            return true;
+                // Wait for actual calendar days to appear
+                await this.page.waitForSelector('.calday', { timeout: 1800000 });
+                console.log("Calendar days are now visible");
+
+
+                // Log the page content for debugging
+                const calendarContent = await this.page.evaluate(() => {
+                    const weekDiv = document.querySelector('#weekDiv');
+                    return weekDiv ? weekDiv.innerHTML : 'No weekDiv found';
+                });
+                console.log('Calendar HTML:', calendarContent);
+
+                // Find available dates (not marked as "Full")
+                const availableDates = await this.page.evaluate(() => {
+                    try {
+                        console.log("Starting date evaluation...");
+                        const days = document.querySelectorAll('.calday');
+                        console.log(`Found ${days.length} calendar days`);
+                        
+                        if (days.length === 0) {
+                            console.log("No calendar days found on the page");
+                            return null;
+                        }
+
+                        for (let i = 0; i < days.length; i++) {
+                            try {
+                                const day = days[i];
+                                const text = day.textContent.trim();
+                                console.log(`Checking day ${i} with text: "${text}"`);
+                                
+                                if (!text.includes('Full')) {
+                                    const brElement = day.querySelector('br');
+                                    if (!brElement) {
+                                        console.log("BR element not found in day");
+                                        continue;
+                                    }
+                                    
+                                    const nextSibling = brElement.nextSibling;
+                                    if (!nextSibling) {
+                                        console.log("No next sibling found after BR");
+                                        continue;
+                                    }
+                                    
+                                    const dateText = nextSibling.textContent.trim();
+                                    console.log(`Found available date at index ${i}: ${dateText}`);
+                                    
+                                    return {
+                                        index: i,
+                                        date: dateText
+                                    };
+                                }
+                            } catch (dayError) {
+                                console.log(`Error processing individual day: ${dayError.message}`);
+                            }
+                        }
+                        
+                        console.log("Finished checking all days, none available");
+                        return null;
+                    } catch (error) {
+                        console.log(`Error in date evaluation: ${error.message}`);
+                        return null;
+                    }
+                }).catch(error => {
+                    console.error("Failed to evaluate page:", error);
+                    return null;
+                });
+
+                if (availableDates) {
+                    console.log(availableDates)
+                    console.log("available dates found")
+                    // Convert date string to Date object
+                    const availableDate = new Date(availableDates.date);
+                    const currentAppointment = new Date(this.currentAppointmentDate);
+                    
+                    if (availableDate < currentAppointment) {
+                        console.log("available date is less than current appointment")
+                        this.currentAppointment = availableDate;
+                        
+                        // Use Puppeteer's built-in selector and click
+                        const calendarDays = await this.page.$$('.calday');
+                        if (calendarDays[availableDates.index]) {
+                            await calendarDays[availableDates.index].click();
+                            console.log("Clicked the available date");
+
+                            // Select earliest time slot
+                            await this.page.waitForSelector('.form-check', { timeout: 1800000 });
+                            const timeSlots = await this.page.$$('.form-check-label.radio');
+                            if (timeSlots.length > 0) {
+                                console.log("Found a time slot to book");
+                                console.log(timeSlots)
+                                await timeSlots[0].click();
+                                console.log("Clicked the time slot");
+
+                                // Uncomment these when ready to actually book
+                                await this.page.click('#rescheduleButton');
+                                console.log(`Successfully booked earlier appointment`);
+                                return true;
+                            }
+                        } else {
+                            console.error("Could not find the calendar day element");
                         }
                     }
                 }
 
-                console.log('No earlier dates found. Checking again in 30 seconds...');
-                await new Promise(resolve => setTimeout(resolve, 30000));
+                console.log('No available dates found. Checking again in 2 seconds...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
                 await this.page.reload();
 
             } catch (error) {
                 console.error('Error occurred:', error);
                 await this.page.reload();
-                await new Promise(resolve => setTimeout(resolve, 30000));
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
+    }
+
+    async getCurrentAppointmentDate() {
+        await this.page.waitForSelector('#timeSelected', { timeout: 1800000 });
+        const dateText = await this.page.evaluate(() => {
+            const timeSelected = document.getElementById('timeSelected');
+            const strongTag = timeSelected.querySelector('strong');
+            const uTag = strongTag.querySelector('u');
+            return uTag ? uTag.textContent.trim() : null;
+        });
+        
+        console.log('Found date text:', dateText);
+        
+        if (!dateText) {
+            throw new Error('Could not find current appointment date');
+        }
+        
+        // Parse the date from format like "January 13, 2026 7:40:00 AM PST"
+        const date = new Date(dateText);
+        
+        if (isNaN(date.getTime())) {
+            throw new Error('Invalid date format received: ' + dateText);
+        }
+        
+        this.currentAppointment = date;
+        console.log(`Current appointment date: ${this.currentAppointment}`);
     }
 
     async run(orderNumber, email, password) {
         try {
             await this.initialize();
             await this.login(orderNumber, email, password);
+            await this.getCurrentAppointmentDate();
             await this.checkAppointments();
         } finally {
             if (this.browser) {
@@ -121,7 +240,7 @@ class AppointmentBot {
 // Usage
 const bot = new AppointmentBot();
 bot.run(
-    'DFBLJK7Q2',
-    'your_email@example.com',
-    'your_password'
+    process.env.ORDER,
+    process.env.EMAIL,
+    process.env.PASSWORD
 ).catch(console.error);
