@@ -1,11 +1,12 @@
-import puppeteer from 'puppeteer'
+import puppeteer from 'puppeteer-core'
 
 const normalizeUserAgent = () => {
     return new Promise(async (resolve, reject) => {
         try {
             let browser = await puppeteer.launch({
                 headless: true,
-                args: ['--no-sandbox']
+                args: ['--no-sandbox'],
+                executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
             })
             let userAgent = await browser.userAgent()
             let normalized = userAgent.replace('Headless', '')

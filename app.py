@@ -4,117 +4,28 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from datetime import datetime
 import time
-import json
-from twocaptcha import TwoCaptcha
 
 class AppointmentBot:
-    def __init__(self, api_key):
-        self.driver = webdriver.Chrome()
+    def __init__(self):
+        self.driver = webdriver.Chrome()  # Make sure you have ChromeDriver installed
         self.current_appointment = datetime.strptime("01/13/2026", "%m/%d/%Y")
-        self.solver = TwoCaptcha(api_key)
         
-    def inject_turnstile_interceptor(self):
-        interceptor_script = """
-        window.turnstileParams = null;
-        window.tsCallback = null;
-        
-        function interceptTurnstile() {
-            if (window.turnstile) {
-                const originalRender = window.turnstile.render;
-                window.turnstile.render = function(a, b) {
-                    let p = {
-                        type: "TurnstileTaskProxyless",
-                        websiteKey: b.sitekey,
-                        websiteURL: window.location.href,
-                        data: b.cData,
-                        pagedata: b.chlPageData,
-                        action: b.action,
-                        userAgent: navigator.userAgent
-                    };
-                    window.turnstileParams = p;
-                    window.tsCallback = b.callback;
-                    console.log('Turnstile parameters intercepted:', p);
-                    return originalRender.call(this, a, b);
-                };
-                return true;
-            }
-            return false;
-        }
-
-        // Try immediate interception
-        if (!interceptTurnstile()) {
-            // Set up observer to wait for script injection
-            const observer = new MutationObserver((mutations, obs) => {
-                if (interceptTurnstile()) {
-                    obs.disconnect();
-                    console.log('Turnstile intercepted via observer');
-                }
-            });
-
-            observer.observe(document, {
-                childList: true,
-                subtree: true
-            });
-        }
-        """
-        self.driver.execute_script(interceptor_script)
-
-    def solve_turnstile(self):
-        print("Waiting for Turnstile parameters...")
-        max_attempts = 30  # Increase wait time to 30 seconds
-        attempt = 0
-        
-        while attempt < max_attempts:
-            try:
-                params = self.driver.execute_script("return window.turnstileParams")
-                if params:
-                    print("Turnstile parameters found:", params)
-                    try:
-                        result = self.solver.turnstile(
-                            sitekey=params['websiteKey'],
-                            url=params['websiteURL'],
-                            action=params.get('action'),
-                            data=params.get('data'),
-                            pagedata=params.get('pagedata')
-                        )
-                        
-                        print("Turnstile solved, applying solution...")
-                        self.driver.execute_script("window.tsCallback(?)", result['code'])
-                        return True
-                    except Exception as e:
-                        print(f"2captcha solving error: {str(e)}")
-                        return False
-            except Exception as e:
-                print(f"Attempt {attempt + 1}: Waiting for parameters... ({str(e)})")
-            
-            attempt += 1
-            time.sleep(1)
-        
-        raise Exception("Failed to get Turnstile parameters after 30 seconds")
-
     def login(self, order_number, email, password):
-        print("Starting login process...")
         self.driver.get("https://lasd.permitium.com/order_tracker")
         
-        print("Injecting Turnstile interceptor...")
-        self.inject_turnstile_interceptor()
+        # Add delay to allow manual completion of Cloudflare verification
+        print("Please complete the Cloudflare verification if shown...")
+        input("Press Enter once the verification is complete and you can see the login form...")
         
-        # Wait for page to fully load
-        time.sleep(5)  # Add initial wait for page load
-        
-        print("Attempting to solve Turnstile...")
-        if not self.solve_turnstile():
-            raise Exception("Failed to solve Cloudflare challenge")
-        
-        print("Turnstile solved, proceeding with login...")
+        # Rest of login process
         WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.NAME, "orderid"))
         )
-        self.driver.find_element(By.NAME, "orderid").send_keys(order_number)
+        self.driver.find_element(By.NAME, "order_number").send_keys(order_number)
         self.driver.find_element(By.NAME, "email").send_keys(email)
         self.driver.find_element(By.NAME, "password").send_keys(password)
         self.driver.find_element(By.ID, "loginButton").click()
-
+        print("Logged in")
     def check_appointments(self):
         while True:
             try:
@@ -170,9 +81,9 @@ class AppointmentBot:
 
 # Usage
 if __name__ == "__main__":
-    bot = AppointmentBot(api_key="b2f661fd6f5a3a94d05900a8439c65bd")
+    bot = AppointmentBot()
     bot.run(
-        order_number="YOUR_ORDER_NUMBER",
+        order_number="DFBLJK7Q2",
         email="your_email@example.com",
         password="your_password"
     )
